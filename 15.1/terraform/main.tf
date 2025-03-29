@@ -10,11 +10,12 @@ terraform {
 
 provider "yandex" {
   token     = var.yc_token
-  cloud_id  = var.yc_cloud_id          # Укажите ваш Cloud ID
-  folder_id = var.yc_folder_id       # Укажите ваш Folder ID
-  zone      = var.yc_zone              # Укажите вашу зону (например, ru-central1-a)
-  
+  cloud_id  = var.yc_cloud_id         
+  folder_id = var.yc_folder_id      
+  zone      = var.yc_zone     
+          
 }
+
 # Определение ресурса виртуальной машины
 # 1. Создаем пустую VPC
 resource "yandex_vpc_network" "vpc_network" {
@@ -55,16 +56,7 @@ resource "yandex_compute_instance" "nat_instance" {
 
   metadata = {
     ssh-keys = "kuliaev:${file("~/.ssh/id_rsa.pub")}"
-    user-data = <<-EOF
-                #cloud-config
-                users:
-                  - name: kuliaev
-                    groups: sudo
-                    sudo: ALL=(ALL) NOPASSWD:ALL
-                package_update: true
-                packages:
-                  - sudo
-                EOF
+    
   }
 }
 
@@ -93,16 +85,7 @@ resource "yandex_compute_instance" "public_instance" {
 
   metadata = {
     ssh-keys = "kuliaev:${file("~/.ssh/id_rsa.pub")}"
-    user-data = <<-EOF
-                #cloud-config
-                users:
-                  - name: kuliaev
-                    groups: sudo
-                    sudo: ALL=(ALL) NOPASSWD:ALL
-                package_update: true
-                packages:
-                  - sudo
-                EOF
+    
   }
 }
 
@@ -153,10 +136,7 @@ resource "yandex_compute_instance" "private_instance" {
     ssh-keys = "kuliaev:${file("~/.ssh/id_rsa.pub")}"
     user-data = <<-EOF
                 #cloud-config
-                users:
-                  - name: kuliaev
-                    groups: sudo
-                    sudo: ALL=(ALL) NOPASSWD:ALL
+
                 package_update: true
                 packages:
                   - traceroute
