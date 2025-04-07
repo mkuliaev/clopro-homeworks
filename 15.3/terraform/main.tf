@@ -16,7 +16,6 @@ provider "yandex" {
   zone      = var.yc_zone
 }
 
-# 1. Создаем VPC и подсети
 resource "yandex_vpc_network" "network" {
   name = "kuliaev-april-o2-network"
 }
@@ -28,14 +27,6 @@ resource "yandex_vpc_subnet" "public_subnet" {
   v4_cidr_blocks = ["192.168.10.0/24"]
 }
 
-# 1. Создаем ключ KMS
-resource "yandex_kms_symmetric_key" "bucket-key" {
-  name              = "bucket-encryption-key"
-  description       = "KMS key for bucket encryption"
-  default_algorithm = "AES_256"
-  rotation_period   = "8760h" # 1 год
-}
-# 2. Создаем сервисный аккаунт для бакета
 resource "yandex_iam_service_account" "sa" {
   name        = "sa-kuliaev-april-o2"
   description = "Service account for bucket and instance group"
@@ -52,7 +43,19 @@ resource "yandex_iam_service_account_static_access_key" "sa-key" {
   description        = "Static access key for bucket"
 }
 
-# 3. Создаем бакет и загружаем картинку
+resource "yandex_kms_symmetric_key" "bucket-key" {
+  name              = "kuliaev-bucket-key"
+  description       = "KMS key for bucket encryption"
+  default_algorithm = "AES_256"
+  rotation_period   = "8760h"
+}
+
+resource "yandex_resourcemanager_folder_iam_member" "kms-user" {
+  folder_id = var.yc_folder_id
+  role      = "kms.keys.encrypterDecrypter"
+  member    = "serviceAccount:${yandex_iam_service_account.sa.id}"
+}
+
 resource "yandex_storage_bucket" "bucket" {
   access_key = yandex_iam_service_account_static_access_key.sa-key.access_key
   secret_key = yandex_iam_service_account_static_access_key.sa-key.secret_key
@@ -72,14 +75,10 @@ resource "yandex_storage_bucket" "bucket" {
     }
   }
 
-    # Добавляем зависимость от ключа KMS
- depends_on = [yandex_kms_symmetric_key.bucket-key]
-}
-
-resource "yandex_resourcemanager_folder_iam_member" "kms-user" {
-  folder_id = var.yc_folder_id
-  role      = "kms.keys.encrypterDecrypter"
-  member    = "serviceAccount:${yandex_iam_service_account.sa.id}"
+  depends_on = [
+    yandex_kms_symmetric_key.bucket-key,
+    yandex_resourcemanager_folder_iam_member.kms-user
+  ]
 }
 
 resource "yandex_storage_object" "image" {
@@ -91,15 +90,14 @@ resource "yandex_storage_object" "image" {
   acl         = "public-read"
 }
 
-# 4. Создаем группу ВМ с LAMP
 data "yandex_compute_image" "lamp" {
   family = "lamp"
 }
 
 resource "yandex_compute_instance_group" "lamp-group" {
-  name               = "lamp-group-kuliaev"
-  folder_id          = var.yc_folder_id
-  service_account_id = yandex_iam_service_account.sa.id
+  name                = "lamp-group-kuliaev"
+  folder_id           = var.yc_folder_id
+  service_account_id  = yandex_iam_service_account.sa.id
   deletion_protection = false
 
   instance_template {
@@ -127,35 +125,9 @@ resource "yandex_compute_instance_group" "lamp-group" {
         #cloud-config
         runcmd:
           - cd /var/www/html
-          - echo '<html>
-                      <head>
-                          <title>Kuliaev April O2</title>
-                          <style>
-                              body {
-                                  font-family: Arial, sans-serif;
-                                  background-color: #f4f4f4;
-                                  text-align: center;
-                                  padding: 50px;
-                              }
-                              h1 {
-                                  color: #333;
-                              }
-                              img {
-                                  max-width: 100%;
-                                  height: auto;
-                                  border: 5px solid #ddd;
-                                  border-radius: 8px;
-                                  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
-                              }
-                          </style>
-                      </head>
-                      <body>
-                          <h1>Kuliaev April O5</h1>
-                          <img src="http://${yandex_storage_bucket.bucket.bucket_domain_name}/${yandex_storage_object.image.key}" alt="Image" />
-                      </body>
-                  </html>' | sudo tee index.html
+          - echo '<html><h1>Kuliaev April O2</h1><img src="http://${yandex_storage_bucket.bucket.bucket_domain_name}/${yandex_storage_object.image.key}"/></html>' | sudo tee index.html
           - sudo systemctl restart apache2
-      EOF 
+      EOF
     }
   }
 
@@ -188,7 +160,6 @@ resource "yandex_compute_instance_group" "lamp-group" {
   }
 }
 
-# 5. Создаем Network Load Balancer
 resource "yandex_lb_network_load_balancer" "nlb" {
   name = "nlb-kuliaev-april-o2"
 
@@ -201,7 +172,7 @@ resource "yandex_lb_network_load_balancer" "nlb" {
   }
 
   attached_target_group {
-    target_group_id = yandex_compute_instance_group.lamp-group.load_balancer.0.target_group_id
+    target_group_id = yandex_compute_instance_group.lamp-group.load_balancer[0].target_group_id
 
     healthcheck {
       name = "http"
@@ -213,7 +184,6 @@ resource "yandex_lb_network_load_balancer" "nlb" {
   }
 }
 
-# 6. (Дополнительно) Создаем Application Load Balancer
 resource "yandex_vpc_address" "alb-address" {
   name = "alb-address-kuliaev"
   external_ipv4_address {
@@ -222,7 +192,7 @@ resource "yandex_vpc_address" "alb-address" {
 }
 
 resource "yandex_alb_target_group" "lamp-target-group" {
-  name           = "lamp-target-group-kuliaev"
+  name = "lamp-target-group-kuliaev"
   
   target {
     subnet_id   = yandex_vpc_subnet.public_subnet.id
@@ -309,7 +279,6 @@ resource "yandex_alb_load_balancer" "alb" {
   ]
 }
 
-# Outputs
 output "bucket_url" {
   value = "http://${yandex_storage_bucket.bucket.bucket_domain_name}/${yandex_storage_object.image.key}"
 }
@@ -327,4 +296,12 @@ output "alb_public_ip" {
 
 output "alb_target_group_id" {
   value = yandex_alb_target_group.lamp-target-group.id
+}
+
+output "kms_key_id" {
+  value = yandex_kms_symmetric_key.bucket-key.id
+}
+
+output "bucket_encryption_status" {
+  value = yandex_storage_bucket.bucket.server_side_encryption_configuration
 }
