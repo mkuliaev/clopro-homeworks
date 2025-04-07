@@ -15,7 +15,7 @@ provider "yandex" {
   folder_id = var.yc_folder_id
   zone      = var.yc_zone
 }
-
+# 1. Создаем VPC и подсети
 resource "yandex_vpc_network" "network" {
   name = "kuliaev-april-o2-network"
 }
@@ -27,6 +27,7 @@ resource "yandex_vpc_subnet" "public_subnet" {
   v4_cidr_blocks = ["192.168.10.0/24"]
 }
 
+# 2. Создаем сервисный аккаунт для бакета
 resource "yandex_iam_service_account" "sa" {
   name        = "sa-kuliaev-april-o2"
   description = "Service account for bucket and instance group"
@@ -43,19 +44,23 @@ resource "yandex_iam_service_account_static_access_key" "sa-key" {
   description        = "Static access key for bucket"
 }
 
+# 1. Создаем ключ KMS 
 resource "yandex_kms_symmetric_key" "bucket-key" {
   name              = "kuliaev-bucket-key"
   description       = "KMS key for bucket encryption"
   default_algorithm = "AES_256"
-  rotation_period   = "8760h"
+  rotation_period   = "8760h" # на год
 }
 
+# права добовляем для сервисного аккаунта
 resource "yandex_resourcemanager_folder_iam_member" "kms-user" {
   folder_id = var.yc_folder_id
   role      = "kms.keys.encrypterDecrypter"
   member    = "serviceAccount:${yandex_iam_service_account.sa.id}"
 }
 
+# 3. Создаем бакет и загружаем картинку
+# бакет с шифрованием
 resource "yandex_storage_bucket" "bucket" {
   access_key = yandex_iam_service_account_static_access_key.sa-key.access_key
   secret_key = yandex_iam_service_account_static_access_key.sa-key.secret_key
@@ -90,6 +95,7 @@ resource "yandex_storage_object" "image" {
   acl         = "public-read"
 }
 
+# 4. Создаем группу ВМ с LAMP
 data "yandex_compute_image" "lamp" {
   family = "lamp"
 }
@@ -160,6 +166,7 @@ resource "yandex_compute_instance_group" "lamp-group" {
   }
 }
 
+# 5. Создаем Network Load Balancer
 resource "yandex_lb_network_load_balancer" "nlb" {
   name = "nlb-kuliaev-april-o2"
 
@@ -184,6 +191,7 @@ resource "yandex_lb_network_load_balancer" "nlb" {
   }
 }
 
+# 6. Создаем Application Load Balancer
 resource "yandex_vpc_address" "alb-address" {
   name = "alb-address-kuliaev"
   external_ipv4_address {
@@ -279,6 +287,7 @@ resource "yandex_alb_load_balancer" "alb" {
   ]
 }
 
+# Outputs
 output "bucket_url" {
   value = "http://${yandex_storage_bucket.bucket.bucket_domain_name}/${yandex_storage_object.image.key}"
 }
@@ -289,6 +298,7 @@ output "nlb_public_ip" {
     one(listener.external_address_spec[*].address)
   ])
 }
+
 
 output "alb_public_ip" {
   value = yandex_vpc_address.alb-address.external_ipv4_address[0].address
